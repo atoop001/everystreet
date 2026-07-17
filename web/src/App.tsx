@@ -8,6 +8,7 @@ type Street = { id: string; name: string; length: number; coords: [number, numbe
 type Area = { id: string; slug: string; label: string; bbox: [number, number, number, number]; center: [number, number]; total_length_m: number };
 type Route = { coords: [number, number][]; edgeIds: string[]; totalDist: number; newStreetDist: number; start: [number, number] };
 type Run = { id: string; distance_m: number; new_distance_m: number; created_at: string };
+type ImportJob = { status: string; phase: string; tilesTotal: number; tilesDone: number; error: string | null; areaSlug: string };
 
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
@@ -89,6 +90,7 @@ function Mapper({ email }: { email: string }) {
   const [loop, setLoop] = useState(true);
   const [route, setRoute] = useState<Route | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [job, setJob] = useState<ImportJob | null>(null);
 
   const startModeRef = useRef(startMode);
   startModeRef.current = startMode;
@@ -181,20 +183,58 @@ function Mapper({ email }: { email: string }) {
   }, [route]);
 
   /* -- actions -- */
+  const showArea = async (res: { area: Area; streets: Street[] }) => {
+    setArea(res.area); setStreets(res.streets); setRoute(null);
+    const map = mapRef.current!;
+    const [s, n, w, e] = res.area.bbox;
+    map.fitBounds([[w, s], [e, n]], { padding: 40 });
+    const runsRes = await api<{ runs: Run[] }>(`/api/runs?areaSlug=${encodeURIComponent(res.area.slug)}`);
+    setRuns(runsRes.runs);
+    say(`Loaded ${res.streets.length} street segments.`);
+  };
+
+  const pollJob = (jobId: string) => {
+    const tick = async () => {
+      try {
+        const j = await api<ImportJob>(`/api/area/jobs/${jobId}`);
+        setJob(j);
+        if (j.status === 'done') {
+          setJob(null);
+          const res = await api<{ area: Area; streets: Street[] } | { jobId: string }>('/api/area', { query, includePaths });
+          if ('jobId' in res) say('Import finished but the area could not be loaded — try searching again.', true);
+          else await showArea(res);
+          setBusy(false);
+          return;
+        }
+        if (j.status === 'error') {
+          say((j.error || 'Import failed.') + ' Click "Find streets" to retry.', true);
+          setJob(null); setBusy(false);
+          return;
+        }
+        setTimeout(tick, 2000);
+      } catch (err: any) {
+        say(err.message, true); setJob(null); setBusy(false);
+      }
+    };
+    tick();
+  };
+
   const findArea = async () => {
     if (!query.trim()) return say('Enter a city or neighborhood first.', true);
-    setBusy(true); say('Searching & importing streets (first import of an area takes a minute)…');
+    setBusy(true); setJob(null); say('Searching…');
     try {
-      const res = await api<{ area: Area; streets: Street[] }>('/api/area', { query, includePaths });
-      setArea(res.area); setStreets(res.streets); setRoute(null);
-      const map = mapRef.current!;
-      const [s, n, w, e] = res.area.bbox;
-      map.fitBounds([[w, s], [e, n]], { padding: 40 });
-      const runsRes = await api<{ runs: Run[] }>(`/api/runs?areaSlug=${encodeURIComponent(res.area.slug)}`);
-      setRuns(runsRes.runs);
-      say(`Loaded ${res.streets.length} street segments.`);
-    } catch (err: any) { say(err.message, true); }
-    finally { setBusy(false); }
+      const res = await api<{ area: Area; streets: Street[] } | { jobId: string }>('/api/area', { query, includePaths });
+      if ('jobId' in res) {
+        say('Importing streets — this can take a few minutes for a whole city.');
+        pollJob(res.jobId);
+        return; // stays busy until the poller resolves
+      }
+      await showArea(res);
+      setBusy(false);
+    } catch (err: any) {
+      say(err.message, true);
+      setBusy(false);
+    }
   };
 
   const genRoute = async () => {
@@ -262,6 +302,14 @@ function Mapper({ email }: { email: string }) {
             include footpaths &amp; trails
           </label>
           <button className="primary" onClick={findArea} disabled={busy}>Find streets</button>
+          {job && <div className="importjob">
+            <p className="hint">{job.phase === 'fetching' && job.tilesTotal > 0
+              ? `Importing streets — tile ${job.tilesDone} of ${job.tilesTotal}`
+              : `Importing streets — ${job.phase}…`}</p>
+            <div className="coverbar"><div className="fill" style={{
+              width: (job.tilesTotal > 0 ? Math.max(5, (job.tilesDone / job.tilesTotal) * 100) : 5) + '%'
+            }} /></div>
+          </div>}
         </div>
 
         {area && <>
