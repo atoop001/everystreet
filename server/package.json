@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "test": "tsx test/engine.test.mjs && tsx test/tiles.test.mjs",
+    "test": "tsx test/engine.test.mjs && tsx test/tiles.test.mjs && tsx test/osm.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
