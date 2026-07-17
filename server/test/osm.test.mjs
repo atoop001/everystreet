@@ -65,4 +65,24 @@ const tinyBbox = [37.0, 37.01, -122.0, -121.99]; // fits in one 4 km tile
   assert(!called, 'no fetch attempted for oversized area');
 }
 
+// -- fail-fast stops the sibling worker: no further tiles pulled, no late progress --
+{
+  // 2×2 grid (~8 km × ~8 km at 37°N) → 4 tiles, concurrency 2.
+  const fourTileBbox = [37.0, 37.0724, -122.0, -121.91];
+  const progress = [];
+  let calls = 0;
+  const mock = async () => { calls++; return busy; };
+  let threw = null;
+  try {
+    await fetchStreets(fourTileBbox, false,
+      (done, total) => progress.push([done, total]), { fetchImpl: mock, ...NO_BACKOFF });
+  } catch (e) { threw = e; }
+  // Promise.all rejects while the sibling's last retry is still queued on a
+  // timer — flush pending timers so the final call count is stable.
+  await new Promise(r => setTimeout(r, 100));
+  assert(threw !== null, 'import fails when tiles fail');
+  assert(calls === 6, `only the 2 in-flight tiles retried (3 attempts each), no new tiles pulled after abort (got ${calls} calls)`);
+  assert(progress.length === 0, 'no progress callbacks after failure');
+}
+
 process.exit(failures ? 1 : 0);

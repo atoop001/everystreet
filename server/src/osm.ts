@@ -92,17 +92,19 @@ export async function fetchStreets(
   const all: any[] = [];
   let done = 0;
   let next = 0;
+  let aborted = false; // set on first permanent tile failure so the sibling worker stops pulling new tiles
   const worker = async () => {
-    while (next < tiles.length) {
+    while (!aborted && next < tiles.length) {
       const i = next++;
       try {
         all.push(...await fetchTile(tiles[i], types, opts));
       } catch (err: any) {
         // All-or-nothing: first tile to exhaust retries fails the import.
+        aborted = true;
         throw new Error(`Street data fetch failed on map tile ${i + 1} of ${tiles.length} after ${ATTEMPTS} attempts — Overpass may be overloaded. Please retry in a few minutes. (${err?.message || err})`);
       }
       done++;
-      onProgress?.(done, tiles.length);
+      if (!aborted) onProgress?.(done, tiles.length);
     }
   };
   await Promise.all(
