@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import compression from 'compression';
 import { generateRoute, pickStart, haversine } from './engine.js';
 import { geocode } from './osm.js';
 import { loadGraph } from './graphCache.js';
@@ -10,6 +12,25 @@ import { requireAuth, type AuthedRequest } from './auth.js';
 import { toGPX } from './gpx.js';
 
 const app = express();
+// Behind Railway's proxy in production; needed for real client IPs.
+app.set('trust proxy', 1);
+app.use(compression());
+app.use('/api/', rateLimit({
+  windowMs: 15 * 60 * 1000, limit: 300,
+  standardHeaders: true, legacyHeaders: false,
+  // Job polling fires every 2 s for many minutes during a city import —
+  // it must not eat the budget (450+ polls per 15 min is normal).
+  skip: req => req.path.startsWith('/area/jobs/'),
+  message: { error: 'Too many requests — slow down and try again shortly.' }
+}));
+
+// Stricter budget for expensive new-area imports (applied manually inside
+// the /api/area handler so cached areas and shared jobs don't consume it).
+const importLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, limit: 10,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many new area imports from this connection — try again in an hour.' }
+});
 app.use(cors({ origin: process.env.WEB_ORIGIN || 'http://localhost:5173' }));
 app.use(express.json({ limit: '2mb' }));
 
@@ -37,18 +58,30 @@ app.post('/api/area', requireAuth, async (req: AuthedRequest, res) => {
     // Someone already importing this area? Share their job.
     const active = await store.getActiveJobBySlug(slug);
     if (active) return res.status(202).json({ jobId: active.id });
-    // Fail fast BEFORE creating a job: bad locations and oversized areas
-    // get an immediate 4xx. (The worker geocodes again — one extra
-    // Nominatim call per brand-new area, well within its 1 req/s policy.)
-    const geo = await geocode(query);
-    const [s, n, w, e] = geo.bbox;
-    const maxDiag = Number(process.env.MAX_AREA_DIAGONAL_M || 60_000);
-    const diag = haversine(s, w, n, e);
-    if (diag > maxDiag) {
-      return res.status(400).json({ error: `That area is ${(diag / 1000).toFixed(0)} km across — too large for one import (limit ~${Math.round(maxDiag / 1000)} km). Try a smaller search.` });
-    }
-    const job = await store.createJob(slug, query, !!includePaths);
-    return res.status(202).json({ jobId: job.id });
+    // Only genuinely-new imports consume the strict budget.
+    importLimiter(req, res, () => {
+      void (async () => {
+        try {
+          // Fail fast BEFORE creating a job: bad locations and oversized
+          // areas get an immediate 4xx. (The worker geocodes again — one
+          // extra Nominatim call per brand-new area, well within its 1
+          // req/s policy.)
+          const geo = await geocode(query);
+          const [s, n, w, e] = geo.bbox;
+          const maxDiag = Number(process.env.MAX_AREA_DIAGONAL_M || 60_000);
+          const diag = haversine(s, w, n, e);
+          if (diag > maxDiag) {
+            return res.status(400).json({ error: `That area is ${(diag / 1000).toFixed(0)} km across — too large for one import (limit ~${Math.round(maxDiag / 1000)} km). Try a smaller search.` });
+          }
+          const job = await store.createJob(slug, query, !!includePaths);
+          res.status(202).json({ jobId: job.id });
+        } catch (err: any) {
+          res.status(err?.message?.includes('not found') ? 404 : 500)
+            .json({ error: err.message || 'Area import failed.' });
+        }
+      })();
+    });
+    return;
   } catch (err: any) {
     res.status(err?.message?.includes('not found') ? 404 : 500)
       .json({ error: err.message || 'Area import failed.' });
