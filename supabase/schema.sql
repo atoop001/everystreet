@@ -66,3 +66,24 @@ create policy "streets are public" on streets for select using (true);
 -- still needs base table privileges (Postgres GRANTs are separate from
 -- RLS policies, and aren't inherited automatically on every project).
 grant select, insert, update, delete on areas, streets, covered, runs to service_role;
+
+-- Background street-import jobs (added for whole-city tiled imports).
+create table if not exists import_jobs (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null,
+  query text not null,
+  include_paths boolean not null default false,
+  status text not null default 'queued'
+    check (status in ('queued','running','done','error')),
+  phase text not null default 'queued',   -- geocoding | fetching | building | saving | done
+  tiles_total int not null default 0,
+  tiles_done int not null default 0,
+  error text,
+  area_id uuid references areas(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+-- One active job per slug: concurrent searches for the same city share a job.
+create unique index if not exists import_jobs_active_slug
+  on import_jobs(slug) where status in ('queued','running');
+grant select, insert, update, delete on import_jobs to service_role;

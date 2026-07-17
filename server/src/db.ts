@@ -102,3 +102,72 @@ export async function getRun(userId: string, runId: string) {
   if (error) throw error;
   return data;
 }
+
+export interface JobRow {
+  id: string; slug: string; query: string; include_paths: boolean;
+  status: 'queued' | 'running' | 'done' | 'error';
+  phase: string; tiles_total: number; tiles_done: number;
+  error: string | null; area_id: string | null; created_at: string;
+}
+
+export async function createJob(slug: string, query: string, includePaths: boolean): Promise<JobRow> {
+  const { data, error } = await db().from('import_jobs')
+    .insert({ slug, query, include_paths: includePaths }).select().single();
+  if (error) {
+    // 23505 = unique violation: a concurrent request created the active
+    // job for this slug first — share it instead of failing.
+    if ((error as { code?: string }).code === '23505') {
+      const existing = await getActiveJobBySlug(slug);
+      if (existing) return existing;
+    }
+    throw error;
+  }
+  return data as JobRow;
+}
+
+export async function getJob(id: string): Promise<JobRow | null> {
+  const { data, error } = await db().from('import_jobs').select('*').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data as JobRow | null;
+}
+
+export async function getActiveJobBySlug(slug: string): Promise<JobRow | null> {
+  const { data, error } = await db().from('import_jobs').select('*')
+    .eq('slug', slug).in('status', ['queued', 'running'])
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (error) throw error;
+  return data as JobRow | null;
+}
+
+export async function claimNextJob(): Promise<JobRow | null> {
+  // Single-worker process, so select-then-update has no real race.
+  const { data, error } = await db().from('import_jobs').select('*')
+    .eq('status', 'queued').order('created_at', { ascending: true })
+    .limit(1).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  await updateJob(data.id, { status: 'running', phase: 'geocoding' });
+  return { ...(data as JobRow), status: 'running', phase: 'geocoding' };
+}
+
+export async function updateJob(
+  id: string,
+  patch: Partial<Pick<JobRow, 'status' | 'phase' | 'tiles_total' | 'tiles_done' | 'error' | 'area_id'>>
+): Promise<void> {
+  const { error } = await db().from('import_jobs')
+    .update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id);
+  if (error) throw error;
+}
+
+export async function failStaleRunningJobs(): Promise<void> {
+  // Queued jobs survive a restart (the worker will pick them up); only
+  // jobs caught mid-flight are unrecoverable.
+  const { error } = await db().from('import_jobs')
+    .update({
+      status: 'error',
+      error: 'The server restarted mid-import — please retry.',
+      updated_at: new Date().toISOString()
+    })
+    .eq('status', 'running');
+  if (error) throw error;
+}
