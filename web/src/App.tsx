@@ -95,6 +95,11 @@ function Mapper({ email }: { email: string }) {
   const startModeRef = useRef(startMode);
   startModeRef.current = startMode;
 
+  // Poll-cancellation token: bumped on every new search and on unmount so
+  // an orphaned import poller stops ticking.
+  const pollToken = useRef(0);
+  useEffect(() => () => { pollToken.current++; }, []);
+
   const say = (msg: string, error = false) => { setStatus(msg); setIsErr(error); };
 
   /* -- map init -- */
@@ -193,8 +198,9 @@ function Mapper({ email }: { email: string }) {
     say(`Loaded ${res.streets.length} street segments.`);
   };
 
-  const pollJob = (jobId: string) => {
+  const pollJob = (jobId: string, token: number) => {
     const tick = async () => {
+      if (token !== pollToken.current) return; // cancelled: newer search started or unmounted
       try {
         const j = await api<ImportJob>(`/api/area/jobs/${jobId}`);
         setJob(j);
@@ -220,13 +226,15 @@ function Mapper({ email }: { email: string }) {
   };
 
   const findArea = async () => {
+    if (busy) return;
     if (!query.trim()) return say('Enter a city or neighborhood first.', true);
+    const token = ++pollToken.current;
     setBusy(true); setJob(null); say('Searching…');
     try {
       const res = await api<{ area: Area; streets: Street[] } | { jobId: string }>('/api/area', { query, includePaths });
       if ('jobId' in res) {
         say('Importing streets — this can take a few minutes for a whole city.');
-        pollJob(res.jobId);
+        pollJob(res.jobId, token);
         return; // stays busy until the poller resolves
       }
       await showArea(res);
