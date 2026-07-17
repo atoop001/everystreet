@@ -173,6 +173,56 @@ one-time. To stop the app, click a terminal and press `Ctrl+C`.
 | Area search fails / times out (504) | The free dev data source can't handle a whole city in one query — search a **neighborhood or small town** instead (limit ~12 km across). If a small area also fails, it may just be briefly overloaded — wait 1–2 min and retry |
 | Search works but map is blank | Hard-refresh the browser (Ctrl+Shift+R) |
 
+## Deploying for your club (optional)
+
+Everything above runs on your own computer. To give your running club a
+real web address, you'll put the three pieces online. Supabase is already
+online — that part's done. The other two:
+
+**The API server → Railway** (about $5/month)
+
+1. First, the code needs to be on GitHub. This project's repo already
+   exists (github.com/atoop001/everystreet) and is connected — pushing is
+   just `git push -u origin main` from the project folder. (Starting
+   fresh instead? Install the GitHub CLI from https://cli.github.com,
+   run `gh auth login`, then
+   `gh repo create everystreet --private --source . --push`.)
+2. Go to https://railway.app → sign in with GitHub → **New Project →
+   Deploy from GitHub repo** → pick `everystreet`.
+3. In the service settings: set **Root Directory** to `server`, and the
+   **Start Command** to `npm start`.
+4. Under **Variables**, add: `SUPABASE_URL` and `SUPABASE_SECRET_KEY`
+   (same values as your `server/.env`), and `WEB_ORIGIN` (your Pages URL
+   from the next part — come back and set it after step "The web app").
+5. Under **Settings → Networking**, generate a public domain. That's
+   your API URL (like `https://everystreet-production.up.railway.app`).
+6. ⚠️ Keep it to **exactly one instance** (Railway's default). The app
+   keeps street graphs and the import worker in memory, so two copies
+   would fight each other.
+
+**The web app → Cloudflare Pages** (free)
+
+1. Go to https://pages.cloudflare.com → sign in → **Create a project →
+   Connect to Git** → pick the `everystreet` repo.
+2. Build settings: **Root directory** `web`, **Build command**
+   `npm run build`, **Build output directory** `dist`.
+3. Environment variables (Production): `VITE_SUPABASE_URL` and
+   `VITE_SUPABASE_PUBLISHABLE_KEY` (same as your `web/.env`), and
+   `VITE_API_URL` = your Railway URL from above.
+4. Deploy. Your site gets an address like `https://everystreet.pages.dev`
+   — now go back to Railway and set `WEB_ORIGIN` to exactly that address.
+
+**Tell Supabase about the new address**
+
+In the Supabase dashboard → **Authentication → URL Configuration**: set
+**Site URL** to your Pages address and add it to **Redirect URLs**.
+Otherwise sign-in links will bounce people back to localhost.
+
+**Updating later:** push to GitHub (`git push`) — Railway and Pages both
+redeploy automatically.
+
+---
+
 ## Working on this with Claude Code (recommended next step)
 
 Install Claude Code (https://claude.com/claude-code) and open it in the
