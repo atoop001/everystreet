@@ -14,6 +14,8 @@ import { toGPX } from './gpx.js';
 const app = express();
 // Behind Railway's proxy in production; needed for real client IPs.
 app.set('trust proxy', 1);
+// CORS first: even rate-limited (429) responses need CORS headers for the browser to read them.
+app.use(cors({ origin: process.env.WEB_ORIGIN || 'http://localhost:5173' }));
 app.use(compression());
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000, limit: 300,
@@ -31,7 +33,6 @@ const importLimiter = rateLimit({
   standardHeaders: true, legacyHeaders: false,
   message: { error: 'Too many new area imports from this connection — try again in an hour.' }
 });
-app.use(cors({ origin: process.env.WEB_ORIGIN || 'http://localhost:5173' }));
 app.use(express.json({ limit: '2mb' }));
 
 const slugify = (s: string) =>
