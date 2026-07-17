@@ -36,6 +36,16 @@ assert(JSON.stringify(one[0]) === JSON.stringify(small), 'single tile equals the
 const zero = tileGrid([37.0, 37.0, -122.0, -122.0], 4);
 assert(zero.length === 1, 'zero-area bbox → 1 tile fallback');
 
+// Regression: a span just over a whole number of steps must not produce a
+// near-zero "sliver" row (the old accumulation loop did).
+const latStep4 = 4 / 110.574;
+const nasty = [37.0, 37.0 + 2.001 * latStep4, -122.0, -121.9];
+const nt = tileGrid(nasty, 4);
+const rowSouths = new Set(nt.map(t => t[0]));
+assert(rowSouths.size === 2, '2.001-step-tall bbox → 2 rows, not 3');
+const minHeight = Math.min(...nt.map(t => t[1] - t[0]));
+assert(minHeight > 0.4 * latStep4, 'no sliver: smallest tile height ≥ 40% of nominal step');
+
 // -- dedupeElements --
 const deduped = dedupeElements([
   { id: 1, tag: 'first' }, { id: 2, tag: 'second' }, { id: 1, tag: 'dupe' }
