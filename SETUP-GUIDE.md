@@ -170,7 +170,7 @@ one-time. To stop the app, click a terminal and press `Ctrl+C`.
 | "Set SUPABASE_URL..." error when starting server | The server `.env` file is missing or misnamed (must be exactly `.env`) |
 | Sign-in email never arrives | Check spam; Supabase's built-in email is slow-ish and capped at ~4/hour on free tier |
 | "Session expired — sign in again" | `SUPABASE_URL` in server `.env` doesn't match your project, or your project's JWT signing keys were recently rotated/revoked — double-check the URL and try signing in again |
-| Area search fails / times out (504) | The free dev data source can't handle a whole city in one query — search a **neighborhood or small town** instead (limit ~12 km across). If a small area also fails, it may just be briefly overloaded — wait 1–2 min and retry |
+| Area search fails or errors | Areas up to ~60 km across now work — a whole city imports in the background with a progress bar (a big city can take several minutes). If it errors, the free data source may be briefly overloaded — wait 1–2 minutes and click **Find streets** again |
 | Search works but map is blank | Hard-refresh the browser (Ctrl+Shift+R) |
 
 ## Deploying for your club (optional)

@@ -6,7 +6,10 @@ import { graphFromRows, type Graph } from './engine.js';
 import * as store from './db.js';
 import type { AreaRow } from './db.js';
 
-const maxEdges = () => Number(process.env.GRAPH_CACHE_MAX_EDGES || 500_000);
+const maxEdges = () => {
+  const n = Number(process.env.GRAPH_CACHE_MAX_EDGES);
+  return Number.isFinite(n) && n > 0 ? n : 500_000;
+};
 const cache = new Map<string, Graph>(); // Map iteration order ≈ LRU (oldest first)
 
 export function putGraph(slug: string, g: Graph): void {

@@ -86,4 +86,7 @@ create table if not exists import_jobs (
 -- One active job per slug: concurrent searches for the same city share a job.
 create unique index if not exists import_jobs_active_slug
   on import_jobs(slug) where status in ('queued','running');
+-- Lock the table down: no policies needed because only the server's
+-- secret key (service_role, which bypasses RLS) ever touches jobs.
+alter table import_jobs enable row level security;
 grant select, insert, update, delete on import_jobs to service_role;

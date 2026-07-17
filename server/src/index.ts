@@ -17,11 +17,17 @@ app.set('trust proxy', 1);
 // CORS first: even rate-limited (429) responses need CORS headers for the browser to read them.
 app.use(cors({ origin: process.env.WEB_ORIGIN || 'http://localhost:5173' }));
 app.use(compression());
+// Job polling fires every 2 s for many minutes during a city import, so it
+// gets its own generous budget instead of a blanket exemption.
+app.use('/api/area/jobs/', rateLimit({
+  windowMs: 15 * 60 * 1000, limit: 2000,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many requests — slow down and try again shortly.' }
+}));
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000, limit: 300,
   standardHeaders: true, legacyHeaders: false,
-  // Job polling fires every 2 s for many minutes during a city import —
-  // it must not eat the budget (450+ polls per 15 min is normal).
+  // /area/jobs/ is budgeted by its own limiter above, not exempted entirely.
   skip: req => req.path.startsWith('/area/jobs/'),
   message: { error: 'Too many requests — slow down and try again shortly.' }
 }));
