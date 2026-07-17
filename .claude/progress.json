@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "project": "Every Street",
+  "updated": "2026-07-15",
+  "milestones": [
+    {
+      "id": "M1",
+      "title": "Scale the core (plan 2026-07-15-scale-core)",
+      "steps": [
+        { "title": "Git repo + secret protection (Task 1)", "done": true },
+        { "title": "Tile-grid functions + tiled Overpass fetch with retries (Tasks 2-3)", "done": true },
+        { "title": "import_jobs schema + job store functions (Task 4)", "done": true },
+        { "title": "Background import worker + shared graph cache (Task 5)", "done": true },
+        { "title": "API: 202 job responses + polling endpoint (Task 6)", "done": true },
+        { "title": "Web UI import progress bar (Task 7)", "done": true },
+        { "title": "Hardening: rate limits + compression (Task 8)", "done": true },
+        { "title": "Deploy: GitHub + Railway + Cloudflare Pages + guide (Task 9)", "done": false }
+      ]
+    },
+    {
+      "id": "M2",
+      "title": "Strava auto-sync",
+      "steps": [
+        { "title": "Strava auto-sync (design + build; spec not yet written)", "done": false }
+      ]
+    },
+    {
+      "id": "M3",
+      "title": "Route quality + full-coverage run planning",
+      "steps": [
+        { "title": "Coverage plan: adaptive set of looped runs covering the whole area (spec not yet written)", "done": false }
+      ]
+    },
+    {
+      "id": "M4",
+      "title": "Mobile experience (PWA)",
+      "steps": [
+        { "title": "PWA (design + build; spec not yet written)", "done": false }
+      ]
+    }
+  ]
+}
