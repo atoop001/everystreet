@@ -1,8 +1,10 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { buildGraph, graphFromRows, generateRoute, pickStart, type Graph } from './engine.js';
-import { geocode, fetchStreets } from './osm.js';
+import { generateRoute, pickStart, haversine } from './engine.js';
+import { geocode } from './osm.js';
+import { loadGraph } from './graphCache.js';
+import { startImportWorker } from './importWorker.js';
 import * as store from './db.js';
 import { requireAuth, type AuthedRequest } from './auth.js';
 import { toGPX } from './gpx.js';
@@ -14,53 +16,57 @@ app.use(express.json({ limit: '2mb' }));
 const slugify = (s: string) =>
   s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'area';
 
-// In-memory graph cache (graphs are expensive to rebuild per request).
-const graphCache = new Map<string, Graph>();
-async function loadGraph(area: store.AreaRow): Promise<Graph> {
-  const hit = graphCache.get(area.slug);
-  if (hit) return hit;
-  const rows = await store.getStreets(area.id);
-  const g = graphFromRows(rows);
-  if (graphCache.size > 20) graphCache.delete(graphCache.keys().next().value!); // simple LRU-ish cap
-  graphCache.set(area.slug, g);
-  return g;
-}
-
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-/** Search / import an area. Cached in DB after first import. */
+/** Search an area. Cached → full payload. Uncached → 202 + background job. */
 app.post('/api/area', requireAuth, async (req: AuthedRequest, res) => {
   try {
     const { query, includePaths } = req.body as { query: string; includePaths?: boolean };
     if (!query?.trim()) return res.status(400).json({ error: 'Enter a city or neighborhood.' });
     const slug = slugify(query) + (includePaths ? '-paths' : '');
-    let area = await store.getArea(slug);
-    if (!area) {
-      const geo = await geocode(query);
-      const elements = await fetchStreets(geo.bbox, !!includePaths);
-      const graph = buildGraph(elements);
-      if (!graph.edges.size) return res.status(404).json({ error: 'No usable streets found there.' });
-      let total = 0;
-      const streets = [...graph.edges.values()].map(e => {
-        total += e.length;
-        return { edge_id: e.id, name: e.name, length_m: e.length, from_node: e.from, to_node: e.to, coords: e.coords };
-      });
-      area = await store.saveArea({
-        slug, label: geo.displayName,
-        bbox: geo.bbox, center: [geo.lat, geo.lon],
-        street_count: graph.edges.size, total_length_m: total
-      }, streets);
-      graphCache.set(slug, graph);
+    const area = await store.getArea(slug);
+    if (area) {
+      const graph = await loadGraph(area);
+      const covered = await store.getCovered(req.userId!, area.slug);
+      const streets = [...graph.edges.values()].map(e => ({
+        id: e.id, name: e.name, length: e.length, coords: e.coords,
+        times: covered.get(e.id) || 0
+      }));
+      return res.json({ area, streets });
     }
-    const graph = await loadGraph(area);
-    const covered = await store.getCovered(req.userId!, area.slug);
-    const streets = [...graph.edges.values()].map(e => ({
-      id: e.id, name: e.name, length: e.length, coords: e.coords,
-      times: covered.get(e.id) || 0
-    }));
-    res.json({ area, streets });
+    // Someone already importing this area? Share their job.
+    const active = await store.getActiveJobBySlug(slug);
+    if (active) return res.status(202).json({ jobId: active.id });
+    // Fail fast BEFORE creating a job: bad locations and oversized areas
+    // get an immediate 4xx. (The worker geocodes again — one extra
+    // Nominatim call per brand-new area, well within its 1 req/s policy.)
+    const geo = await geocode(query);
+    const [s, n, w, e] = geo.bbox;
+    const maxDiag = Number(process.env.MAX_AREA_DIAGONAL_M || 60_000);
+    const diag = haversine(s, w, n, e);
+    if (diag > maxDiag) {
+      return res.status(400).json({ error: `That area is ${(diag / 1000).toFixed(0)} km across — too large for one import (limit ~${Math.round(maxDiag / 1000)} km). Try a smaller search.` });
+    }
+    const job = await store.createJob(slug, query, !!includePaths);
+    return res.status(202).json({ jobId: job.id });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Area import failed.' });
+    res.status(err?.message?.includes('not found') ? 404 : 500)
+      .json({ error: err.message || 'Area import failed.' });
+  }
+});
+
+/** Poll a background import job. */
+app.get('/api/area/jobs/:id', requireAuth, async (req: AuthedRequest, res) => {
+  try {
+    const job = await store.getJob(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Import job not found.' });
+    res.json({
+      status: job.status, phase: job.phase,
+      tilesTotal: job.tiles_total, tilesDone: job.tiles_done,
+      error: job.error, areaSlug: job.slug
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -150,6 +156,8 @@ app.get('/api/runs/:id/gpx', requireAuth, async (req: AuthedRequest, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+startImportWorker();
 
 const port = Number(process.env.PORT || 3001);
 app.listen(port, () => console.log(`Every Street server → http://localhost:${port}`));
