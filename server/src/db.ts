@@ -140,14 +140,20 @@ export async function getActiveJobBySlug(slug: string): Promise<JobRow | null> {
 }
 
 export async function claimNextJob(): Promise<JobRow | null> {
-  // Single-worker process, so select-then-update has no real race.
   const { data, error } = await db().from('import_jobs').select('*')
     .eq('status', 'queued').order('created_at', { ascending: true })
     .limit(1).maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  await updateJob(data.id, { status: 'running', phase: 'geocoding' });
-  return { ...(data as JobRow), status: 'running', phase: 'geocoding' };
+  // Guarded update makes the claim atomic: only the caller that flips
+  // queued→running gets the job back; a racing claimant gets null and
+  // simply polls again.
+  const { data: claimed, error: claimError } = await db().from('import_jobs')
+    .update({ status: 'running', phase: 'geocoding', updated_at: new Date().toISOString() })
+    .eq('id', data.id).eq('status', 'queued')
+    .select().maybeSingle();
+  if (claimError) throw claimError;
+  return (claimed as JobRow | null) ?? null;
 }
 
 export async function updateJob(
