@@ -127,7 +127,11 @@ export async function createJob(slug: string, query: string, includePaths: boole
 
 export async function getJob(id: string): Promise<JobRow | null> {
   const { data, error } = await db().from('import_jobs').select('*').eq('id', id).maybeSingle();
-  if (error) throw error;
+  if (error) {
+    // 22P02 = invalid uuid text — treat a malformed id as "not found".
+    if ((error as { code?: string }).code === '22P02') return null;
+    throw error;
+  }
   return data as JobRow | null;
 }
 
@@ -175,5 +179,12 @@ export async function failStaleRunningJobs(): Promise<void> {
       updated_at: new Date().toISOString()
     })
     .eq('status', 'running');
+  if (error) throw error;
+}
+
+export async function deleteOldJobs(days = 7): Promise<void> {
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+  const { error } = await db().from('import_jobs')
+    .delete().in('status', ['done', 'error']).lt('created_at', cutoff);
   if (error) throw error;
 }

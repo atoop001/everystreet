@@ -3,8 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import compression from 'compression';
-import { generateRoute, pickStart, haversine } from './engine.js';
-import { geocode } from './osm.js';
+import { generateRoute, pickStart } from './engine.js';
+import { geocode, areaSizeError } from './osm.js';
 import { loadGraph } from './graphCache.js';
 import { startImportWorker } from './importWorker.js';
 import * as store from './db.js';
@@ -65,7 +65,7 @@ app.post('/api/area', requireAuth, async (req: AuthedRequest, res) => {
     // Someone already importing this area? Share their job.
     const active = await store.getActiveJobBySlug(slug);
     if (active) return res.status(202).json({ jobId: active.id });
-    // Only genuinely-new imports consume the strict budget.
+    // Failed geocodes (typos) also consume this budget on purpose — it shields Nominatim from junk queries.
     importLimiter(req, res, () => {
       void (async () => {
         try {
@@ -74,12 +74,8 @@ app.post('/api/area', requireAuth, async (req: AuthedRequest, res) => {
           // extra Nominatim call per brand-new area, well within its 1
           // req/s policy.)
           const geo = await geocode(query);
-          const [s, n, w, e] = geo.bbox;
-          const maxDiag = Number(process.env.MAX_AREA_DIAGONAL_M || 60_000);
-          const diag = haversine(s, w, n, e);
-          if (diag > maxDiag) {
-            return res.status(400).json({ error: `That area is ${(diag / 1000).toFixed(0)} km across — too large for one import (limit ~${Math.round(maxDiag / 1000)} km). Try a smaller search.` });
-          }
+          const sizeErr = areaSizeError(geo.bbox);
+          if (sizeErr) return res.status(400).json({ error: sizeErr });
           const job = await store.createJob(slug, query, !!includePaths);
           res.status(202).json({ jobId: job.id });
         } catch (err: any) {

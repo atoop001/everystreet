@@ -73,18 +73,23 @@ export async function fetchTile(bbox: BBox, types: string, opts: FetchOpts = {})
   throw lastErr;
 }
 
+/** Returns a human-readable error if the bbox exceeds the import size cap, else null. */
+export function areaSizeError(bbox: BBox): string | null {
+  const [south, north, west, east] = bbox;
+  const diag = haversine(south, west, north, east);
+  const maxDiag = maxDiagonalM();
+  if (diag <= maxDiag) return null;
+  return `That area is ${(diag / 1000).toFixed(0)} km across — too large for one import (limit ~${Math.round(maxDiag / 1000)} km). Try a smaller search.`;
+}
+
 export async function fetchStreets(
   bbox: BBox,
   includePaths: boolean,
   onProgress?: (tilesDone: number, tilesTotal: number) => void,
   opts: FetchOpts = {}
 ): Promise<any[]> {
-  const [south, north, west, east] = bbox;
-  const diag = haversine(south, west, north, east);
-  const maxDiag = maxDiagonalM();
-  if (diag > maxDiag) {
-    throw new Error(`That area is ${(diag / 1000).toFixed(0)} km across — too large for one import (limit ~${Math.round(maxDiag / 1000)} km). Try a smaller search.`);
-  }
+  const sizeErr = areaSizeError(bbox);
+  if (sizeErr) throw new Error(sizeErr);
   const types = includePaths
     ? 'primary|secondary|tertiary|unclassified|residential|living_street|pedestrian|footway|path|cycleway'
     : 'primary|secondary|tertiary|unclassified|residential|living_street|pedestrian';

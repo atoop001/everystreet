@@ -14,6 +14,7 @@ GPS apps, and watch the coverage heatmap fill in.
 
 ## Phase status (see architecture doc)
 - [x] Phase 1: accounts, area import, route engine, GPX, heatmap (this code)
+- [x] Scale-up: whole-city tiled imports, background jobs + progress, rate limits, deploy guide
 - [ ] Phase 2: Expo mobile apps (same API)
 - [ ] Phase 3: Strava + Garmin sync
 - [ ] Phase 4: store launch

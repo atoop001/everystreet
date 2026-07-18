@@ -5,7 +5,7 @@
 // nothing. Sub-project 3's coverage-plan computation will reuse this shape.
 import * as store from './db.js';
 import { geocode, fetchStreets } from './osm.js';
-import { buildGraph } from './engine.js';
+import { buildGraph, graphFromRows } from './engine.js';
 import { putGraph } from './graphCache.js';
 
 const POLL_MS = 2000;
@@ -22,6 +22,11 @@ async function loop(): Promise<void> {
     await store.failStaleRunningJobs();
   } catch (err) {
     console.error('Import worker: stale-job cleanup failed:', err);
+  }
+  try {
+    await store.deleteOldJobs();
+  } catch (err) {
+    console.error('Import worker: old-job pruning failed:', err);
   }
   for (;;) {
     try {
@@ -69,7 +74,8 @@ async function runJob(job: store.JobRow): Promise<void> {
       bbox: geo.bbox, center: [geo.lat, geo.lon],
       street_count: graph.edges.size, total_length_m: total
     }, streets);
-    putGraph(job.slug, graph);
+    // Prime the cache from the rounded rows so it matches what a restart would rebuild from the DB.
+    putGraph(job.slug, graphFromRows(streets));
     await store.updateJob(job.id, { status: 'done', phase: 'done', area_id: area.id });
   } catch (err: any) {
     await store.updateJob(job.id, {
